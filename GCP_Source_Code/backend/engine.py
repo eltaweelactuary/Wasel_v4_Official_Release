@@ -105,7 +105,14 @@ class WaselEngine:
         # Pose Backend
         if YOLO_AVAILABLE:
             try:
-                backend["pose_model"] = YOLO(yolo_weights)
+                # Ensure the model file exists, download if necessary
+                yolo_path = self.models_dir / yolo_weights
+                if not yolo_path.exists():
+                    logger.info(f"⏳ Downloading YOLOv8 model to {yolo_path}...")
+                    # YOLO() will automatically download from Ultralytics if not found locally
+                    # By passing the absolute path, we force it to download there
+                
+                backend["pose_model"] = YOLO(str(yolo_path))
                 backend["pose"] = "yolo"
                 logger.info("✅ YOLOv8-Pose loaded")
             except Exception as e:
