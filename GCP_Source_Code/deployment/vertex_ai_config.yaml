@@ -1,0 +1,31 @@
+# Wasel v4 Pro: Vertex AI Endpoint Config
+# For deploying the TensorFlow classifier as a managed Vertex AI endpoint.
+
+apiVersion: vertex.ai/v1
+kind: ModelDeployment
+
+metadata:
+  name: wasel-v4-sign-classifier
+  region: me-central1
+
+spec:
+  model:
+    artifact_uri: gs://${PROJECT_ID}-wasel/models/sign_classifier/
+    framework: TENSORFLOW
+    framework_version: "2.12"
+
+  endpoint:
+    display_name: wasel-v4-pro-endpoint
+    machine_type: n1-standard-2
+    accelerator:
+      type: NVIDIA_TESLA_T4
+      count: 1
+    min_replicas: 1
+    max_replicas: 3
+
+  traffic:
+    - deployed_model_percentage: 100
+
+  monitoring:
+    enable_access_logging: true
+    sampling_percentage: 10
