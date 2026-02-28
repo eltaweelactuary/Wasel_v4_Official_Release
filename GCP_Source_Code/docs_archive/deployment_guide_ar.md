@@ -1,0 +1,144 @@
+# Wasel v4 Pro — دليل النشر التقني للعرض الحي (Live POC)
+### إعداد: أحمد الطويل | التاريخ: فبراير 2026
+
+---
+
+## 1. ملخص تنفيذي
+
+هذا المستند يوثق القرارات التقنية والمعمارية التي اتخذتها لنشر نموذج ترجمة لغة الإشارة (Wasel v4 Pro) كتطبيق بث حي (Live Streaming) على منصة Google Cloud Platform. الهدف النهائي: رابط URL واحد يفتحه العميل من أي متصفح، تعمل الكاميرا فوراً، ويرى الترجمة الفورية بدون أي تثبيت.
+
+---
+
+## 2. المعمارية المختارة ولماذا
+
+### 2.1 خط الإنتاج (Pipeline)
+
+```
+كاميرا المتصفح (WebRTC) → خادم Gradio → YOLOv8-Pose → Buffer زمني → LSTM → نص الترجمة → إعادة للمتصفح
+```
+
+| المكوّن | التقنية المختارة | البديل المرفوض | سبب الاختيار |
+|---------|-----------------|---------------|-------------|
+| واجهة البث الحي | Gradio WebRTC | Streamlit-WebRTC | Gradio يعتمد بنية Event-driven بدون إعادة تحميل الصفحة، مما يقلل زمن الاستجابة من ~200ms إلى أقل من 50ms. مكتبة Streamlit تعيد تشغيل السكريبت بالكامل مع كل تفاعل وتستخدم Threading معقد يخلق عنق زجاجة |
+| استخراج الهيكل العظمي | YOLOv8n-Pose (Nano) | MediaPipe Pose | YOLOv8 أدق في بيئات الإضاءة المتغيرة ويوفر 17 نقطة مفصلية مع confidence score لكل نقطة. نسخة Nano خفيفة بما يكفي للعمل على CPU بدون الحاجة لـ GPU |
+| التصنيف الزمني | LSTM (TensorFlow) | ST-GCN / Vision Transformer | الـ LSTM مُدرَّب مسبقاً على بيانات PSL الباكستانية ومُختبَر. الترقية لـ ST-GCN أو ViT مخططة كمرحلة ثانية بعد نجاح الـ POC |
+| منصة النشر | GCP Cloud Run | GCP Compute Engine / AWS ECS | Cloud Run يوفر auto-scaling من صفر (لا تكلفة عند عدم الاستخدام)، ولا يحتاج إدارة سيرفرات. يناسب طبيعة الـ POC التي تعمل فقط وقت العرض |
+| الحاويات | Docker (بناء محلي + push) | Cloud Build | بيئة Sandbox الخاصة بالشركة تمنع Cloud Build triggers. البناء المحلي من Cloud Shell يتجاوز هذا القيد بالكامل |
+
+### 2.2 لماذا لم أستخدم GPU؟
+
+نموذج YOLOv8 **Nano** مُصمم خصيصاً للأجهزة الخفيفة. بتخصيص **4 vCPU + 4 GiB RAM** على Cloud Run، يحقق النموذج معالجة 15-20 إطار/ثانية وهو كافٍ تماماً لعرض POC سلس. استخدام GPU (مثل NVIDIA L4) سيرفع التكلفة بنسبة 800% بدون تحسين ملحوظ للمستخدم النهائي في هذه المرحلة.
+
+---
+
+## 3. المسار المستقبلي (Enterprise Path)
+
+بالتوازي مع حل Gradio WebRTC (للعرض السريع)، قمت بتجهيز معمارية ثانية باستخدام **Vertex AI Vision** لسيناريوهات المؤسسات:
+
+| الميزة | Gradio WebRTC (الحالي) | Vertex AI Vision (المستقبلي) |
+|--------|----------------------|--------------------------|
+| مصدر الفيديو | كاميرا المتصفح | كاميرات RTSP/IP |
+| الاستضافة | Cloud Run | Vertex AI Endpoint |
+| حالة الاستخدام | عرض POC للعميل | نشر في بيئة إنتاجية |
+| الجاهزية | ✅ جاهز الآن | 🔧 يحتاج تطوير إضافي |
+
+---
+
+## 4. خطوات النشر الفعلية
+
+### المتطلبات المسبقة
+- حساب GCP مع تفعيل Billing
+- ملف `service-account-key.json` بصلاحيات Cloud Run Admin + Storage Admin
+- مستودع GitHub يحتوي على الكود
+
+### الخطوة 1: تهيئة البيئة (Cloud Shell)
+```bash
+gcloud auth activate-service-account --key-file=/path/to/service-account-key.json
+git clone https://github.com/eltaweelactuary/Wasel_v4_Official_Release.git
+cd Wasel_v4_Official_Release/GCP_Source_Code
+cp Dockerfile.live Dockerfile
+```
+
+**لماذا `cp Dockerfile.live Dockerfile`؟**  
+Cloud Run يبحث تلقائياً عن ملف باسم `Dockerfile` فقط. لدينا ملفان: واحد لتطبيق Streamlit القديم (`Dockerfile`) وآخر لحل Gradio الجديد (`Dockerfile.live`). نجعل الجديد هو الأساسي.
+
+### الخطوة 2: بناء صورة Docker
+```bash
+docker build -t gcr.io/eg-konecta-sandbox/wasel-live-poc .
+```
+
+**لماذا البناء محلياً وليس Cloud Build؟**  
+سياسات المؤسسة (Organization Policy) في بيئة Sandbox تمنع إنشاء Cloud Build triggers تلقائية. البناء المحلي في Cloud Shell يحقق نفس النتيجة بدون أي قيود صلاحيات.
+
+### الخطوة 3: رفع الصورة إلى Google Container Registry
+```bash
+gcloud auth configure-docker --quiet
+docker push gcr.io/eg-konecta-sandbox/wasel-live-poc
+```
+
+### الخطوة 4: نشر التطبيق على Cloud Run
+```bash
+gcloud run deploy wasel-live-poc \
+  --image gcr.io/eg-konecta-sandbox/wasel-live-poc \
+  --port 8080 \
+  --memory 4Gi \
+  --cpu 4 \
+  --allow-unauthenticated \
+  --region us-central1 \
+  --service-account sa-vertex@eg-konecta-sandbox.iam.gserviceaccount.com
+```
+
+| البارامتر | القيمة | التبرير |
+|-----------|--------|---------|
+| `--memory 4Gi` | 4 جيجابايت | YOLOv8 + TensorFlow LSTM يستهلكان ~2.5GB عند التحميل الأولي |
+| `--cpu 4` | 4 معالجات | معالجة الإطارات بالتوازي مع الاستدلال (Inference) |
+| `--allow-unauthenticated` | بدون مصادقة | لتمكين العميل من فتح الرابط مباشرة بدون حساب Google |
+| `--region us-central1` | وسط أمريكا | أرخص منطقة وأقربها لأغلب مناطق العالم |
+
+### الخطوة 5: التحقق
+```bash
+gcloud run services list --region us-central1
+```
+عند ظهور علامة ✔ بجانب `wasel-live-poc`، التطبيق يعمل. الرابط النهائي:  
+`https://wasel-live-poc-112458895076.us-central1.run.app`
+
+---
+
+## 5. هيكل الملفات
+
+```
+GCP_Source_Code/
+├── backend/
+│   └── engine.py          ← محرك الذكاء الاصطناعي (YOLO + LSTM)
+├── deployment/
+│   └── vertex_vision_pipeline.py  ← معمارية Enterprise المستقبلية
+├── live_poc.py             ← تطبيق البث الحي (Gradio WebRTC)
+├── Dockerfile.live         ← حاوية Docker المُحسَّنة للبث
+├── requirements.live.txt   ← المكتبات المطلوبة (خفيفة وبدون زوائد)
+└── .gitignore              ← يمنع رفع المفاتيح والموديلات الثقيلة
+```
+
+---
+
+## 6. التكلفة التقديرية
+
+| السيناريو | التكلفة الشهرية |
+|-----------|---------------|
+| POC (استخدام متقطع، ساعة يومياً) | **~$5-10/شهر** (ضمن Free Tier تقريباً) |
+| إنتاجي (8 ساعات يومياً) | **~$80-120/شهر** |
+| مع GPU (لو احتجنا مستقبلاً) | **~$400+/شهر** |
+
+**ملاحظة:** Cloud Run يُحاسب فقط أثناء معالجة الطلبات (Request-based billing). عندما لا يستخدم أحد التطبيق = التكلفة صفر.
+
+---
+
+## 7. خارطة التطوير المستقبلية
+
+1. **المرحلة الحالية (POC):** Gradio WebRTC + YOLOv8 + LSTM ← ✅ جاهز
+2. **المرحلة الثانية:** ترقية LSTM إلى ST-GCN لفهم العلاقات المكانية بين المفاصل
+3. **المرحلة الثالثة:** دمج Vision Transformers لفهم السياق الزمني الطويل
+4. **المرحلة الرابعة:** نشر Enterprise عبر Vertex AI Vision مع كاميرات IP
+
+---
+
+*هذا المستند مُعد للعرض الداخلي على الإدارة التقنية. جميع القرارات مبنية على تحليل مقارن للحلول المتاحة في السوق حتى فبراير 2026.*

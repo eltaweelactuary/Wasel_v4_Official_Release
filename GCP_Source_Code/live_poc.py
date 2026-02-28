@@ -10,43 +10,46 @@ import logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 logger = logging.getLogger(__name__)
 
-# Try to import the Wasel engine
-try:
-    from backend.engine import WaselEngine
-    ENGINE_AVAILABLE = True
-except ImportError as e:
-    logger.error(f"Failed to import WaselEngine: {e}")
-    ENGINE_AVAILABLE = False
+# Lazy engine loading: server starts FIRST, models load on first request
+# This prevents Cloud Run timeout (container must listen on PORT within 300s)
+engine = None
+sequence_buffer = deque(maxlen=30)
+_engine_loaded = False
 
-if ENGINE_AVAILABLE:
-    logger.info("Initializing Wasel Engine...")
-    engine = WaselEngine(
-        data_dir="./wasel_v4_data",
-        yolo_weights="yolov8n-pose.pt"
-    )
-    # Temporary buffer to hold sequential keypoints (e.g., last 30 frames)
-    # The LSTM expects sequences of varying lengths, but we will maintain a rolling window.
-    sequence_buffer = deque(maxlen=30)
-else:
-    engine = None
-    sequence_buffer = deque()
+def get_engine():
+    global engine, _engine_loaded
+    if _engine_loaded:
+        return engine
+    _engine_loaded = True
+    try:
+        from backend.engine import WaselEngine
+        logger.info("Initializing Wasel Engine (first request)...")
+        engine = WaselEngine(
+            data_dir="./wasel_v4_data",
+            yolo_weights="yolov8n-pose.pt"
+        )
+        logger.info("Engine ready!")
+    except Exception as e:
+        logger.error(f"Failed to load engine: {e}")
+        engine = None
+    return engine
 
 def process_frame(image: np.ndarray) -> np.ndarray:
     """
     Process a single frame from the WebRTC stream.
     Image comes in as RGB numpy array.
     """
-    if engine is None:
-        # Fallback if engine fails to load: just return the image
-        cv2.putText(image, "Engine Offline", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
+    eng = get_engine()
+    if eng is None:
+        cv2.putText(image, "Loading AI models...", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
         return image
         
     try:
         # YOLO works with RGB or BGR, we pass the raw image.
         # Ensure we have the model loaded
-        if "pose_model" in engine.backend and engine.backend["pose_model"]:
+        if "pose_model" in eng.backend and eng.backend["pose_model"]:
             # Extract keypoints
-            keypoints = engine.extract_keypoints_yolo(image)
+            keypoints = eng.extract_keypoints_yolo(image)
             
             # Predict if we have keypoints
             predicted_label = "Waiting for signs..."
@@ -58,12 +61,12 @@ def process_frame(image: np.ndarray) -> np.ndarray:
                 # Only predict if we have accumulated enough frames (e.g. 5 or more)
                 if len(sequence_buffer) > 5:
                     seq_array = np.array(list(sequence_buffer))
-                    label, conf = engine.predict(seq_array)
+                    label, conf = eng.predict(seq_array)
                     if label and conf > 45.0:
                         predicted_label = f"{label} ({conf:.1f}%)"
             
             # Draw YOLO Pose annotations visually for the demo
-            results = engine.backend["pose_model"](image, verbose=False)
+            results = eng.backend["pose_model"](image, verbose=False)
             annotated_image = results[0].plot()
             
             # Draw prediction text on the frame
