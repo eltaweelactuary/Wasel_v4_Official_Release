@@ -17,10 +17,14 @@ venv/
 *.swp
 
 # Data (persisted at runtime, not in repo)
-wasel_v4_data/
+wasel_v4_data/landmarks/
+wasel_v4_data/videos/
 *.npy
-*.pkl
 *.h5
+
+# Allow trained models (needed for deployment)
+!wasel_v4_data/models/
+!wasel_v4_data/models/*.pkl
 
 # OS
 .DS_Store
