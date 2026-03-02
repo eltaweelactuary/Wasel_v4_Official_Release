@@ -104,9 +104,9 @@ text-shadow:0 2px 20px rgba(0,255,136,0.4);min-height:55px;transition:all .3s}
 </style></head><body>
 <div id='c'>
 <video id='v' autoplay playsinline muted></video>
-<div id='top'><div id='brand'>WASEL v4 PRO — ON-PREMISE AI</div>
+<div id='top'><div id='brand'>WASEL v4 PRO — ON-PREMISE AI TRANSLATOR</div>
 <div id='txt'>Starting camera...</div></div>
-<div id='bot'>Gemma 3 Local</div>
+<div id='bot'>AI Local GPU</div>
 </div>
 <canvas id='cv' style='display:none'></canvas>
 <script>
@@ -127,7 +127,7 @@ body:JSON.stringify({image:d})})
 const t=d.translation||'...';
 if(t==='...'||t.length<2){tx.textContent='Show a sign...';tx.style.color='#555'}
 else{tx.textContent=t;tx.style.color='#00ff88'}
-bt.textContent='⚡ Gemma 3 Local — '+new Date().toLocaleTimeString();busy=false
+bt.textContent='⚡ AI Local GPU — '+new Date().toLocaleTimeString();busy=false
 }).catch(e=>{bt.textContent='Err: '+e;busy=false})}
 </script></body></html>
 """
